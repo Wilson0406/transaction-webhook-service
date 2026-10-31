@@ -1,0 +1,144 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Webhook Tester</title>
+<style>
+  :root { --bg:#fff; --fg:#1a1a1a; --muted:#6b6b6b; --card:#f6f6f4; --line:#ddd; --accent:#1a56db; --ok:#0a7d3c; --warn:#b45309; }
+  @media (prefers-color-scheme: dark) {
+    :root { --bg:#161616; --fg:#eee; --muted:#9a9a9a; --card:#222; --line:#383838; --accent:#6ea0ff; --ok:#4cc77f; --warn:#f0a94a; }
+  }
+  * { box-sizing: border-box; }
+  body { font: 15px/1.5 system-ui, sans-serif; background: var(--bg); color: var(--fg); max-width: 860px; margin: 0 auto; padding: 24px 16px; }
+  h1 { font-size: 22px; margin: 0 0 4px; }
+  p.sub { color: var(--muted); margin: 0 0 20px; }
+  .card { background: var(--card); border: 1px solid var(--line); border-radius: 10px; padding: 16px; margin-bottom: 16px; }
+  label { display: block; font-size: 12px; color: var(--muted); margin-bottom: 4px; }
+  input { width: 100%; padding: 8px 10px; border: 1px solid var(--line); border-radius: 6px; background: var(--bg); color: var(--fg); font: inherit; }
+  .grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(180px, 1fr)); gap: 12px; }
+  .row { display: flex; gap: 8px; flex-wrap: wrap; align-items: center; margin-top: 12px; }
+  button { padding: 8px 14px; border-radius: 6px; border: 1px solid var(--line); background: var(--bg); color: var(--fg); cursor: pointer; font: inherit; }
+  button.primary { background: var(--accent); border-color: var(--accent); color: #fff; }
+  .pill { padding: 2px 8px; border-radius: 99px; font-size: 12px; font-weight: 600; }
+  .PROCESSING { background: color-mix(in srgb, var(--warn) 20%, transparent); color: var(--warn); }
+  .PROCESSED { background: color-mix(in srgb, var(--ok) 20%, transparent); color: var(--ok); }
+  .scroll { overflow-x: auto; }
+  table { width: 100%; border-collapse: collapse; font-size: 13px; }
+  th, td { text-align: left; padding: 8px 6px; border-bottom: 1px solid var(--line); white-space: nowrap; }
+  th { color: var(--muted); font-weight: 500; }
+  #log { font: 12px/1.6 ui-monospace, monospace; color: var(--muted); max-height: 140px; overflow-y: auto; }
+  #health { font-size: 13px; }
+</style>
+</head>
+<body>
+  <h1>Transaction Webhook Tester</h1>
+  <p class="sub">Send webhooks to the service, try duplicates, and watch each transaction move from PROCESSING to PROCESSED.</p>
+
+  <div class="card">
+    <label for="api">API base URL</label>
+    <input id="api" placeholder="https://your-service.onrender.com">
+    <div class="row">
+      <button id="ping">Check health / wake server</button>
+      <span id="health">not checked</span>
+    </div>
+  </div>
+
+  <div class="card">
+    <div class="grid">
+      <div><label>transaction_id</label><input id="tid"></div>
+      <div><label>source_account</label><input id="src" value="acc_user_789"></div>
+      <div><label>destination_account</label><input id="dst" value="acc_merchant_456"></div>
+      <div><label>amount</label><input id="amt" type="number" step="0.01" value="1500"></div>
+      <div><label>currency</label><input id="cur" value="INR" maxlength="3"></div>
+    </div>
+    <div class="row">
+      <button class="primary" id="send">Send webhook</button>
+      <button id="dupes">Send same webhook ×5</button>
+      <button id="fresh">New transaction_id</button>
+    </div>
+  </div>
+
+  <div class="card scroll">
+    <table>
+      <thead><tr><th>transaction_id</th><th>amount</th><th>status</th><th>created</th><th>processed</th><th>time to process</th></tr></thead>
+      <tbody id="rows"><tr><td colspan="6" style="color:var(--muted)">No transactions yet.</td></tr></tbody>
+    </table>
+  </div>
+
+  <div class="card"><label>Request log</label><div id="log"></div></div>
+
+<script>
+const $ = id => document.getElementById(id);
+const tracked = new Set();
+const newId = () => "txn_" + Math.random().toString(36).slice(2, 14);
+const base = () => $("api").value.trim().replace(/\/+$/, "");
+
+try { $("api").value = localStorage.getItem("api_base") || window.API_BASE || "http://localhost:8000"; }
+catch { $("api").value = window.API_BASE || "http://localhost:8000"; }
+$("api").addEventListener("change", () => { try { localStorage.setItem("api_base", base()); } catch {} });
+$("tid").value = newId();
+
+function log(msg) {
+  const d = $("log"); d.textContent += new Date().toLocaleTimeString() + "  " + msg + "\n"; d.scrollTop = d.scrollHeight;
+}
+
+async function ping() {
+  const t0 = performance.now();
+  $("health").textContent = "checking…";
+  try {
+    const r = await fetch(base() + "/"); const j = await r.json();
+    $("health").textContent = `${j.status} · ${Math.round(performance.now() - t0)} ms`;
+  } catch (e) { $("health").textContent = "unreachable"; }
+}
+
+async function sendOnce(payload) {
+  const t0 = performance.now();
+  try {
+    const r = await fetch(base() + "/v1/webhooks/transactions", {
+      method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(payload),
+    });
+    const ms = Math.round(performance.now() - t0);
+    const body = await r.json().catch(() => ({}));
+    log(`POST ${payload.transaction_id} → ${r.status} in ${ms} ms${body.duplicate ? " (duplicate ignored)" : ""}`);
+    return r.ok;
+  } catch (e) { log("POST failed: " + e.message); return false; }
+}
+
+const payload = () => ({
+  transaction_id: $("tid").value.trim(), source_account: $("src").value.trim(),
+  destination_account: $("dst").value.trim(), amount: parseFloat($("amt").value), currency: $("cur").value.trim(),
+});
+
+async function send(times) {
+  const p = payload();
+  for (let i = 0; i < times; i++) await sendOnce(p);
+  tracked.add(p.transaction_id); refresh();
+}
+
+const fmt = s => s ? new Date(s).toLocaleTimeString() : "—";
+
+async function refresh() {
+  if (!tracked.size) return;
+  const out = [];
+  for (const id of tracked) {
+    try {
+      const r = await fetch(`${base()}/v1/transactions/${encodeURIComponent(id)}`);
+      if (!r.ok) continue;
+      const [t] = await r.json();
+      const dur = t.processed_at ? Math.round((new Date(t.processed_at) - new Date(t.created_at)) / 1000) + " s" : "…";
+      out.push(`<tr><td>${t.transaction_id}</td><td>${t.amount} ${t.currency}</td>
+        <td><span class="pill ${t.status}">${t.status}</span></td><td>${fmt(t.created_at)}</td><td>${fmt(t.processed_at)}</td><td>${dur}</td></tr>`);
+    } catch {}
+  }
+  if (out.length) $("rows").innerHTML = out.reverse().join("");
+}
+
+$("ping").onclick = ping;
+$("send").onclick = () => send(1);
+$("dupes").onclick = () => send(5);
+$("fresh").onclick = () => { $("tid").value = newId(); };
+setInterval(refresh, 2000);
+</script>
+</body>
+</html>

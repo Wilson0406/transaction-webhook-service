@@ -1,0 +1,14 @@
+services:
+  - type: web
+    name: webhook-service
+    runtime: docker
+    plan: free
+    healthCheckPath: /
+    envVars:
+      - key: DATABASE_URL
+        sync: false          # paste your Supabase connection string in the dashboard
+      - key: PROCESSING_DELAY_SECONDS
+        value: "30"
+      - key: CORS_ORIGINS
+        value: "https://confluencr-webhook-fe.netlify.app/"
+        

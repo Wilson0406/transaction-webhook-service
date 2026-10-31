@@ -37,7 +37,7 @@ app = FastAPI(title="Transaction Webhook Service", lifespan=lifespan)
 
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=[o.strip() for o in os.getenv("CORS_ORIGINS", "*").split(",")],
+    allow_origins=[origin.strip().rstrip("/") for origin in os.getenv("CORS_ORIGINS", "*").split(",")],
     allow_methods=["GET", "POST"],
     allow_headers=["*"],
 )

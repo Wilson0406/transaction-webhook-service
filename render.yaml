@@ -10,5 +10,5 @@ services:
       - key: PROCESSING_DELAY_SECONDS
         value: "30"
       - key: CORS_ORIGINS
-        value: "https://confluencr-webhook-fe.netlify.app/"
+        value: "https://confluencr-webhook-fe.netlify.app"
         
